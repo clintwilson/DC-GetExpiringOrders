@@ -17,7 +17,7 @@ function DC-GetExpiringOrders
         #pass in the number days within which to get expiring orders
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true, Mandatory = $true, HelpMessage ="Please specify the number of days to look at expiring orders")]
 		[ValidateNotNullOrEmpty()]
-		[string] $days        
+		[int] $days        
     )
 
     #timestamp the report file
@@ -30,58 +30,72 @@ function DC-GetExpiringOrders
         $plus_30_days = (get-date).AddDays($days)
         $end_time = $plus_30_days.ToString("yyyy-MM-dd+hh:mm:ss")
         $filters = "?filters[status]=issued&filters[valid_till]=$current_time...$end_time"
-        $list_url = $global:url + "/order/certificate" + $filters             
-
+        $list_url = $global:url + "/order/certificate" + $filters
+        
         # Set the request headers
         $headers = @{
             "X-DC-DEVKEY"=$apikey.key;            
             "Accept"="application/json"
-        }        
+        }       
         
         # Send the API query
         $resp = Invoke-RestMethod -Uri $list_url -Method Get -Headers $headers -ContentType "application/json"
-        
+        $expiringfound = $resp.page.total
+
         #Grab the order details of each Order expiring in the next [user-specified] days, including user assignments and additional emails; exclude those orders which have already been renewed
-        foreach ( $order in $resp.orders | Where-Object {$_.is_renewed -ne "false"}) 
+        if ($expiringfound -ge "1")
         {            
-            $ord_url = $global:url + "/order/certificate/" + $order.id
-            $ord_details = Invoke-RestMethod -Uri $ord_url -Method Get -Headers $headers -ContentType "application/json"
-            $userarray = @(foreach ($user in $ord_details.user_assignments)
-            {
-                New-Object -TypeName PSCustomObject -Property @{              
-                NameEmail = $user.first_name + " " + $user.last_name + ", " + $user.email                    
+            Write-Host "There are " -NoNewline
+            Write-Host "$expiringfound Orders " -foregroundcolor "red" -NoNewline
+            Write-Host "expiring in the next $days days. Details are being saved at '$global:dir\" -NoNewline
+            Write-Host "ExpiringOrders$timestamp.csv'" -ForegroundColor "red"
+            foreach ( $order in $resp.orders | Where-Object {$_.is_renewed -ne "false"}) 
+            {            
+                $ord_url = $global:url + "/order/certificate/" + $order.id            
+                $ord_details = Invoke-RestMethod -Uri $ord_url -Method Get -Headers $headers -ContentType "application/json"
+                $userarray = @(foreach ($user in $ord_details.user_assignments)
+                {
+                    New-Object -TypeName PSCustomObject -Property @{              
+                    NameEmail = $user.first_name + " " + $user.last_name + ", " + $user.email                    
+                    }
                 }
-            }
-            )
-            $users = $userarray.NameEmail -join "; "
-            $emailarray = @(foreach ($email in $ord_details.additional_emails)
-            {
-                New-Object -TypeName PSCustomObject -Property @{              
-                Emails = $email
+                )
+                $users = $userarray.NameEmail -join "; "
+                $emailarray = @(foreach ($email in $ord_details.additional_emails)
+                {
+                    New-Object -TypeName PSCustomObject -Property @{              
+                    Emails = $email
+                    }
                 }
-            }
-            )
-            $emails = $emailarray.Emails -join "; "       
+                )
+                $emails = $emailarray.Emails -join "; "       
         
-            # Create a CSV report of the orders expiring in the next [user-specified] days                        
-            New-Object -TypeName PSCustomObject -Property @{
-                OrderID = $order.id
-                CertificateID = $order.certificate.id
-                CommonName = $order.certificate.common_name
-                ExpirationDate = $order.certificate.valid_till
-                Renewed = $order.is_renewed
-                Renewal = $ord_details.is_renewal
-                OrderDate = $order.date_created
-                Organization = $order.organization.name
-                Product = $order.product.name
-                Duplicates = $order.has_duplicates
-                MainThumbprint = $ord_details.certificate.thumbprint
-                MainSerialNumber = $ord_details.certificate.serial_number
-                Issuer = $ord_details.certificate.ca_cert.name
-                RenewalNotifications = $ord_details.disable_renewal_notifications
-                Emails = $emails
-                Users = $users            
-            } | Export-Csv -Path $global:dir\ExpiringOrders$timestamp.csv -NoTypeInformation -Append
+                # Create a CSV report of the orders expiring in the next [user-specified] days                        
+                New-Object -TypeName PSCustomObject -Property @{
+                    OrderID = $order.id
+                    CertificateID = $order.certificate.id
+                    CommonName = $order.certificate.common_name
+                    ExpirationDate = $order.certificate.valid_till
+                    Renewed = $order.is_renewed
+                    Renewal = $ord_details.is_renewal
+                    OrderDate = $order.date_created
+                    Organization = $order.organization.name
+                    Product = $order.product.name
+                    Duplicates = $order.has_duplicates
+                    MainThumbprint = $ord_details.certificate.thumbprint
+                    MainSerialNumber = $ord_details.certificate.serial_number
+                    Issuer = $ord_details.certificate.ca_cert.name
+                    RenewalNotifications = $ord_details.disable_renewal_notifications
+                    Emails = $emails
+                    Users = $users            
+                } | Export-Csv -Path $global:dir\ExpiringOrders$timestamp.csv -NoTypeInformation -Append
+            }
+        }
+        else
+        {
+            Write-Host "There are " -NoNewline
+            Write-Host "$expiringfound Orders " -foregroundcolor "red" -NoNewline
+            Write-Host "expiring in the next $days days."
         }                        
     }
     catch 
